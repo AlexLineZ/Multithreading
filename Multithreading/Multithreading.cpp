@@ -6,11 +6,10 @@
 #include <signal.h>
 
 using namespace std;
-bool gSignalStatus = false;
+bool status = false;
 
-void signal_handler(int signal) {
-    cout << "Hui" << endl;
-    gSignalStatus = true;
+void signalHandler(int signal) {
+    status = true;
 }
 
 struct Request {
@@ -44,7 +43,7 @@ Request generateRequest(int groupID) {
 }
 
 void processRequests(Device* device, queue<Request>& queue, mutex& mutex, condition_variable& cv) {
-    while (!gSignalStatus) {
+    while (!status) {
         unique_lock<std::mutex> lock(mutex);
 
         while (queue.empty()) {
@@ -66,8 +65,33 @@ void processRequests(Device* device, queue<Request>& queue, mutex& mutex, condit
     }
 }
 
+void requestGenerator(vector<Request>& requests, mutex& mutex, condition_variable& cv, int countGroups, int maxQueueSize, bool& status, bool& queueIsFull) {
+    int currentGroup = 0;
+    while (!status) {
+        unique_lock<std::mutex> lock(mutex);
+        while (requests.size() >= maxQueueSize) {
+            cout << "Queue is full :(" << endl;
+            queueIsFull = true;
+            cv.wait(lock);
+        }
+
+        queueIsFull = false;
+        lock.unlock();
+
+        Request request = generateRequest(currentGroup);
+        lock.lock();
+        requests.push_back(request);
+        lock.unlock();
+        cv.notify_one();
+
+        currentGroup = (currentGroup + 1) % countGroups;
+        this_thread::sleep_for(chrono::milliseconds(100));
+    }
+}
+
+
 int main() {
-    signal(SIGINT, signal_handler);
+    signal(SIGINT, signalHandler);
 
     int countGroups, countDevicesInGroup, maxQueueSize;
 
@@ -75,7 +99,7 @@ int main() {
     cin >> countGroups;
     cout << "Enter the number of devices: ";
     cin >> countDevicesInGroup;
-    cout << "Enter maximum queue size: ";
+    cout << "Enter queue size: ";
     cin >> maxQueueSize;
 
     vector<vector<Device>> devices(countGroups, vector<Device>(countDevicesInGroup));
@@ -95,7 +119,7 @@ int main() {
 
     thread requestGenerator([&requests, &mutex, &cv, countGroups, maxQueueSize, &queueIsFull]() {
         int currentGroup = 0;
-        while (!gSignalStatus) {
+        while (!status) {
             unique_lock<std::mutex> lock(mutex);
             while (requests.size() >= maxQueueSize) {
                 cout << "Queue is full :(" << endl;
@@ -118,7 +142,7 @@ int main() {
     });
     requestGenerator.detach();
 
-    while (!gSignalStatus) {
+    while (!status) {
         cout << "Device status:" << endl;
         for (int i = 0; i < countGroups; i++) {
             for (int j = 0; j < countDevicesInGroup; j++) {
