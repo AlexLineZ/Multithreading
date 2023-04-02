@@ -6,7 +6,7 @@
 #include <random>
 
 using namespace std;
-const int MAX_QUEUE_SIZE = 10;
+const int MAX_QUEUE_SIZE = 4;
 
 struct Request {
     int groupID;  
@@ -30,9 +30,9 @@ struct Device {
 };
 
 int getRandomNumber(int min, int max) {
-    srand(time(NULL));
-    int num = min + rand() % (max - min + 1);
-    return num;
+    static std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<int> distribution(min, max);
+    return distribution(generator);
 }
 
 Request generateRequest(int groupID) {
@@ -59,7 +59,7 @@ void processRequests(Device* device, queue<Request>& queue, mutex& mutex, condit
         device->currentPriority = request.priority;
         cout << "Device " << device->id << " in group " << device->groupID <<
             " is processing request with type " << request.type << " and priority " << request.priority << endl;
-        this_thread::sleep_for(chrono::milliseconds(getRandomNumber(1000, 5000)));
+        this_thread::sleep_for(chrono::milliseconds(1000));
         device->isBusy = false;
 
         cv.notify_one();
@@ -91,7 +91,7 @@ int main() {
 
             cv.notify_all();
 
-            this_thread::sleep_for(chrono::milliseconds(getRandomNumber(1000, 5000)));
+            this_thread::sleep_for(chrono::milliseconds(1000));
         }
     });
 
