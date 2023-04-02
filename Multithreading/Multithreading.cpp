@@ -6,7 +6,6 @@
 #include <random>
 
 using namespace std;
-const int MAX_QUEUE_SIZE = 4;
 
 struct Request {
     int groupID;  
@@ -22,11 +21,9 @@ struct Device {
     int currentPriority;
     thread thread;
 
-    Device() : id(0), groupID(0), isBusy(false), currentType(0), currentPriority(0) {}
+    Device() : id(-1), groupID(-1), isBusy(false), currentType(-1), currentPriority(-1) {}
 
-    Device(const Device& other) :
-        id(other.id), groupID(other.groupID), isBusy(other.isBusy),
-        currentType(other.currentType), currentPriority(other.currentPriority) {}
+    Device(const Device& other) :id(other.id), groupID(other.groupID), isBusy(other.isBusy), currentType(other.currentType), currentPriority(other.currentPriority) {}
 };
 
 int getRandomNumber(int min, int max) {
@@ -59,7 +56,7 @@ void processRequests(Device* device, queue<Request>& queue, mutex& mutex, condit
         device->currentPriority = request.priority;
         cout << "Device " << device->id << " in group " << device->groupID <<
             " is processing request with type " << request.type << " and priority " << request.priority << endl;
-        this_thread::sleep_for(chrono::milliseconds(1000));
+        this_thread::sleep_for(chrono::milliseconds(getRandomNumber(1000, 5000)));
         device->isBusy = false;
 
         cv.notify_one();
@@ -67,53 +64,68 @@ void processRequests(Device* device, queue<Request>& queue, mutex& mutex, condit
 }
 
 int main() {
-    const int NUM_GROUPS = 3;
-    const int NUM_DEVICES_PER_GROUP = 2;
+    int numGroups, numDevicesPerGroup, maxQueueSize;
 
-    queue<Request> request_queue; // Очередь заявок
-    vector<Device> devices; // Вектор приборов
-    mutex mutex; // Мьютекс для доступа к очереди заявок
-    condition_variable cv; // Условная переменная для оповещения потоков о появлении новых заявок
+    cout << "Enter number of groups: ";
+    cin >> numGroups;
+    cout << "Enter number of devices per group: ";
+    cin >> numDevicesPerGroup;
+    cout << "Enter maximum queue size: ";
+    cin >> maxQueueSize;
 
-    thread request_generator([&]() {
-        while (true) {
-            unique_lock<std::mutex> lock(mutex);
+    vector<vector<Device>> devices(numGroups, vector<Device>(numDevicesPerGroup));
+    queue<Request> requests;
+    mutex mutex;
+    condition_variable cv;
 
-            if (request_queue.size() >= MAX_QUEUE_SIZE) {
-                cv.wait(lock);
-                continue;
-            }
-
-            int groupID = getRandomNumber(0, NUM_GROUPS - 1);
-            Request request = generateRequest(groupID);
-            request_queue.push(request);
-            cout << "New request from group " << groupID << " with type " << request.type << " and priority " << request.priority << endl;
-
-            cv.notify_all();
-
-            this_thread::sleep_for(chrono::milliseconds(1000));
-        }
-    });
-
-    for (int i = 0; i < NUM_GROUPS; i++) {
-        for (int j = 0; j < NUM_DEVICES_PER_GROUP; j++) {
-            Device device;
-            device.id = j + 1;
-            device.groupID = i;
-            device.isBusy = false;
-            device.currentType = -1;
-            device.currentPriority = -1;
-            device.thread = thread(processRequests, &device, ref(request_queue), ref(mutex), ref(cv));
-            devices.push_back(device);
+    // Create and start device threads
+    for (int i = 0; i < numGroups; i++) {
+        for (int j = 0; j < numDevicesPerGroup; j++) {
+            devices[i][j].id = j;
+            devices[i][j].groupID = i;
+            devices[i][j].thread = thread(processRequests, &devices[i][j], ref(requests), ref(mutex), ref(cv));
+            devices[i][j].thread.detach();
         }
     }
 
-    cin.get();
+    // Start request generator thread
+    thread requestGenerator([&requests, &mutex, &cv, numGroups, maxQueueSize]() {
+        int currentGroup = 0;
+        while (true) {
+            if (requests.size() < maxQueueSize) {
+                Request request = generateRequest(currentGroup);
+                unique_lock<std::mutex> lock(mutex);
+                requests.push(request);
+                lock.unlock();
+                cv.notify_one();
+            }
+            else {
+                cout << "Queue is full :(" << endl;
+            }
+            currentGroup = (currentGroup + 1) % numGroups;
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        });
+    requestGenerator.detach();
 
-    request_generator.join();
+    // Print device status and queue size every second
+    while (true) {
+        cout << "Device status:" << endl;
+        for (int i = 0; i < numGroups; i++) {
+            for (int j = 0; j < numDevicesPerGroup; j++) {
+                cout << "Group " << i << ", Device " << j << ": ";
+                if (devices[i][j].isBusy) {
+                    cout << "busy processing request with type " << devices[i][j].currentType <<
+                        " and priority " << devices[i][j].currentPriority << endl;
+                }
+                else {
+                    cout << "idle" << endl;
+                }
+            }
+        }
+        cout << endl << "Queue size: " << requests.size() << " / " << maxQueueSize << endl;
 
-    for (Device& device : devices) {
-        device.thread.join();
+        this_thread::sleep_for(chrono::seconds(1));
     }
 
     return 0;
